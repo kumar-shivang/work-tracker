@@ -98,7 +98,11 @@ async def handle_github_webhook(payload: dict):
         
         if not diff_text:
             logger.warning(f"No diff found for {commit_sha}")
-            summary = "No diff available (possibly empty commit or API error)."
+            summary = {
+                "files_modified": [],
+                "key_changes": ["No diff available (possibly empty commit or API error)."],
+                "purpose": "Unable to fetch or process diff."
+            }
         else:
             # 2. Summarize via LLM
             summary = summarize_diff(diff_text)
