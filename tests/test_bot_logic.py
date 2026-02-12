@@ -4,7 +4,9 @@ from app.services.telegram import bot
 from telegram import Update, User, Message, Chat
 import os
 import datetime
+import pytest
 
+@pytest.mark.anyio
 async def test_handle_message():
     print("Testing handle_message logic...")
     

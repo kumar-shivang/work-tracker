@@ -1,4 +1,4 @@
-from llm import summarize_diff
+from app.services.llm import summarize_diff
 
 dummy_diff = """
 diff --git a/main.py b/main.py
