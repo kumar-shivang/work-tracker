@@ -30,8 +30,8 @@ async def generate_and_send_summary():
         llm_summary = {"major_accomplishments": ["Failed to generate LLM summary"], "critical_issues": [str(e)], "next_steps": []}
 
     # Compose Email
-    today = datetime.datetime.now().strftime("%d-%m-%Y")
-    subject = f"daily report — {datetime.datetime.now().strftime('%d %b %Y')}"
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime("%d-%m-%Y")
+    subject = f"daily report — {datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime('%d %b %Y')}"
     
     # Parse structured summary
     # llm_summary is now a dict
@@ -74,7 +74,7 @@ async def generate_and_send_summary():
     if success:
         # Log to report
         log_entry = f"""
-📧 Daily Report Sent at {datetime.datetime.now().strftime("%H:%M")}
+📧 Daily Report Sent at {datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime("%H:%M")}
 
 Report emailed to: {", ".join(Config.EMAIL_RECIPIENTS)}
 

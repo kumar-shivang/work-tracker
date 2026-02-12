@@ -37,7 +37,9 @@ class GoogleDocClient:
             logger.error("Google Docs service not initialized.")
             return
 
-        today_heading = datetime.datetime.now().strftime("%d %B %Y")
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_tz = datetime.timezone(ist_offset)
+        today_heading = datetime.datetime.now(ist_tz).strftime("%d %B %Y")
         
         try:
             # 1. Get current document content to check for heading

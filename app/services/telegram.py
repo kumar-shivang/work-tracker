@@ -3,8 +3,11 @@ import asyncio
 import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import Config
 from app.services.github import append_to_report
+from app.services.llm import parse_user_intent
+import datetime
 
 # Enable logging
 logging.basicConfig(
@@ -19,6 +22,7 @@ class TelegramBot:
     def __init__(self):
         self.application = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
         self.chat_id = Config.MY_TELEGRAM_CHAT_ID
+        self.scheduler = AsyncIOScheduler()
         self._setup_handlers()
         
     def _setup_handlers(self):
@@ -47,20 +51,61 @@ class TelegramBot:
         # Ideally we'd correlate this with a specific check-in request, 
         # but for simplicity, we'll log all text messages as updates.
         
-        logger.info(f"Received message from {user_id}: {message_text}")
+        # Interpret intent
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_tz = datetime.timezone(ist_offset)
+        current_time = datetime.datetime.now(ist_tz).isoformat()
+        intent = parse_user_intent(message_text, current_time)
         
-        # Log to report
-        self.log_checkin(message_text)
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="Got it! Logged your status."
-        )
+        if intent.get("type") == "reminder":
+            reminder_text = intent.get("content")
+            reminder_time_str = intent.get("datetime")
+            
+            try:
+                reminder_time = datetime.datetime.fromisoformat(reminder_time_str)
+                # Check if time is in past, if so, just send now (or maybe it was meant for tomorrow?)
+                # LLM should handle tomorrow logic, but let's be safe.
+                if reminder_time < datetime.datetime.now(ist_tz):
+                     await context.bot.send_message(
+                        chat_id=update.effective_chat.id, 
+                        text=f"The time {reminder_time.strftime('%H:%M')} has already passed. I'll remind you now: {reminder_text}"
+                    )
+                else:
+                    self.scheduler.add_job(
+                        self.send_reminder,
+                        'date',
+                        run_date=reminder_time,
+                        args=[update.effective_chat.id, reminder_text]
+                    )
+                    
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id, 
+                        text=f"I've set a reminder for {reminder_time.strftime('%Y-%m-%d %H:%M')}: {reminder_text}"
+                    )
+            except ValueError:
+                 await context.bot.send_message(
+                    chat_id=update.effective_chat.id, 
+                    text="I couldn't understand the time for the reminder. Please try again."
+                )
+            
+        else:
+            # Assume status update
+            logger.info(f"Received message from {user_id}: {message_text}")
+            
+            # Log to report
+            self.log_checkin(message_text)
+            
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="Got it! Logged your status."
+            )
 
     def log_checkin(self, text: str):
         """Append the check-in to the Google Doc."""
         import datetime
-        timestamp = datetime.datetime.now().strftime("%H:%M")
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_tz = datetime.timezone(ist_offset)
+        timestamp = datetime.datetime.now(ist_tz).strftime("%H:%M")
         
         entry = f"""
 🕐 Check-In at {timestamp}
@@ -84,12 +129,23 @@ Status: {text}
         except Exception as e:
             logger.error(f"Failed to send check-in: {e}")
 
+    async def send_reminder(self, chat_id: int, text: str):
+        try:
+             await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔔 **REMINDER**: {text}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send reminder: {e}")
+
     async def initialize(self):
         await self.application.initialize()
+        self.scheduler.start()
         await self.application.start()
         await self.application.updater.start_polling() # This runs in background
 
     async def shutdown(self):
+        self.scheduler.shutdown()
         await self.application.updater.stop()
         await self.application.stop()
         await self.application.shutdown()

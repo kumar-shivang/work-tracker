@@ -33,7 +33,9 @@ def append_to_report(commit_data: dict, summary: dict):
     Appends the commit summary to the Google Doc.
     summary is now a dict with keys: files_modified, key_changes, purpose
     """
-    timestamp = datetime.datetime.now().strftime("%H:%M")
+    ist_offset = datetime.timedelta(hours=5, minutes=30)
+    ist_tz = datetime.timezone(ist_offset)
+    timestamp = datetime.datetime.now(ist_tz).strftime("%H:%M")
     
     # Format the structured summary into a readable string
     files = ", ".join(summary.get("files_modified", []))

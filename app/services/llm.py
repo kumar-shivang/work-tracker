@@ -54,7 +54,39 @@ def send_request(messages:List[Dict[str,str]], schema:Optional[Dict[str,str]]=No
     except Exception as e:
         return f"Exception calling LLM: {e}"
 
-from app.services.schemas import COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA
+from app.services.schemas import COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA, REMINDER_SCHEMA
+
+def parse_user_intent(message: str, current_time: str) -> dict:
+    """
+    Parses the user's message to determine if it's a reminder or a status update.
+    """
+    prompt = f"""
+Analyze the following message and determine if the user wants to set a reminder or is just providing a status update.
+
+Current Time: {current_time}
+Message: "{message}"
+
+If it is a reminder, extract the content and calculate the ISO 8601 datetime for the reminder based on the current time.
+If it is a status update or anything else, categorize it accordingly.
+"""
+    messages = [
+        {"role": "system", "content": "You are a helpful personal assistant. Output valid JSON."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    response_str = send_request(messages, schema=REMINDER_SCHEMA)
+    
+    try:
+        if response_str.startswith("```json"):
+            response_str = response_str.replace("```json", "").replace("```", "").strip()
+        return json.loads(response_str)
+    except json.JSONDecodeError:
+        # Fallback to status update if parsing fails
+        return {
+            "type": "status_update",
+            "content": message
+        }
+
 
 def summarize_diff(diff_text: str) -> dict:
     """
