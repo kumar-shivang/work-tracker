@@ -24,7 +24,7 @@ async def generate_and_send_summary():
 
     # Generate Summary
     try:
-        llm_summary = summarize_daily_report(report_content)
+        llm_summary = await summarize_daily_report(report_content)
     except Exception as e:
         logger.error(f"LLM summarization failed: {e}")
         llm_summary = {"major_accomplishments": ["Failed to generate LLM summary"], "critical_issues": [str(e)], "next_steps": []}
