@@ -12,6 +12,8 @@ from app.db.models import (
     Commit, Reminder, Expense, Habit, JournalEntry,
     StatusUpdate, LLMLog, Memory
 )
+# Import memory service (avoid circular import)
+import importlib
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,14 @@ class DBService:
             await session.commit()
             await session.refresh(commit)
             logger.info(f"Logged commit {sha[:7]} to database")
+            
+            # Create memory asynchronously (don't block on failure)
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_commit_memory(commit)
+            except Exception as e:
+                logger.warning(f"Failed to create commit memory: {e}")
+            
             return commit
 
     async def get_commits(self, repo: str = None, limit: int = 50) -> List[Commit]:
@@ -72,6 +82,14 @@ class DBService:
             await session.commit()
             await session.refresh(reminder)
             logger.info(f"Logged reminder: {content[:30]}...")
+            
+            # Create memory asynchronously
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_reminder_memory(reminder)
+            except Exception as e:
+                logger.warning(f"Failed to create reminder memory: {e}")
+            
             return reminder
 
     async def mark_reminder_fired(self, reminder_id: int):
@@ -108,6 +126,14 @@ class DBService:
             await session.commit()
             await session.refresh(expense)
             logger.info(f"Logged expense: {currency} {amount} ({category})")
+            
+            # Create memory asynchronously
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_expense_memory(expense)
+            except Exception as e:
+                logger.warning(f"Failed to create expense memory: {e}")
+            
             return expense
 
     async def get_expenses(self, limit: int = 50) -> List[Expense]:
@@ -126,6 +152,14 @@ class DBService:
             await session.commit()
             await session.refresh(habit)
             logger.info(f"Logged habit: {habit_name}")
+            
+            # Create memory asynchronously
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_habit_memory(habit)
+            except Exception as e:
+                logger.warning(f"Failed to create habit memory: {e}")
+            
             return habit
 
     async def get_habits(self, limit: int = 50) -> List[Habit]:
@@ -144,6 +178,14 @@ class DBService:
             await session.commit()
             await session.refresh(entry)
             logger.info(f"Logged journal entry (sentiment: {sentiment})")
+            
+            # Create memory asynchronously
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_journal_memory(entry)
+            except Exception as e:
+                logger.warning(f"Failed to create journal memory: {e}")
+            
             return entry
 
     async def get_journal_entries(self, limit: int = 50) -> List[JournalEntry]:
@@ -166,6 +208,14 @@ class DBService:
             await session.commit()
             await session.refresh(status)
             logger.info(f"Logged status update from {source}")
+            
+            # Create memory asynchronously
+            try:
+                memory_module = importlib.import_module('app.services.memory')
+                await memory_module.memory_service.create_status_memory(status)
+            except Exception as e:
+                logger.warning(f"Failed to create status memory: {e}")
+            
             return status
 
     # ─── LLM I/O Logging ────────────────────────────────────

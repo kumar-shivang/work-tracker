@@ -57,3 +57,8 @@ class Config:
     SUMMARY_DAYS = os.getenv("SUMMARY_DAYS", "mon-fri")
     SUMMARY_HOUR = int(os.getenv("SUMMARY_HOUR", "18"))
     SUMMARY_MINUTE = int(os.getenv("SUMMARY_MINUTE", "30"))
+
+    # Memory/Embedding Configuration
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1536"))
+

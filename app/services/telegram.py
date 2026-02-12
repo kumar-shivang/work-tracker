@@ -17,6 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from app.services.google_workspace import workspace_manager
+from app.services.db_service import db_service
 
 class TelegramBot:
     def __init__(self):
@@ -89,6 +90,14 @@ class TelegramBot:
                         text=f"The time {reminder_time.strftime('%H:%M')} has already passed. I'll remind you now: {reminder_text}"
                     )
                 else:
+                    # Log to database
+                    await db_service.log_reminder(
+                        content=reminder_text,
+                        remind_at=reminder_time,
+                        chat_id=str(update.effective_chat.id)
+                    )
+                    
+                    # Schedule in APScheduler
                     self.scheduler.add_job(
                         self.send_reminder,
                         'date',
@@ -112,7 +121,15 @@ class TelegramBot:
             category = intent.get("category", "General")
             desc = intent.get("content")
             
-            # Log to Sheets
+            # Log to database
+            await db_service.log_expense(
+                amount=amount,
+                currency=currency,
+                category=category,
+                description=desc
+            )
+            
+            # Also log to Sheets for backward compatibility
             ist_offset = datetime.timedelta(hours=5, minutes=30)
             ist_tz = datetime.timezone(ist_offset)
             now = datetime.datetime.now(ist_tz)
@@ -133,7 +150,10 @@ class TelegramBot:
         elif intent.get("type") == "habit":
             habit = intent.get("content")
             
-            # Log to Sheets
+            # Log to database
+            await db_service.log_habit(habit_name=habit)
+            
+            # Also log to Sheets for backward compatibility
             ist_offset = datetime.timedelta(hours=5, minutes=30)
             ist_tz = datetime.timezone(ist_offset)
             now = datetime.datetime.now(ist_tz)
@@ -155,7 +175,13 @@ class TelegramBot:
             entry = intent.get("content")
             sentiment = intent.get("sentiment", "neutral")
             
-            # Log to Sheets
+            # Log to database
+            await db_service.log_journal(
+                content=entry,
+                sentiment=sentiment
+            )
+            
+            # Also log to Sheets for backward compatibility
             ist_offset = datetime.timedelta(hours=5, minutes=30)
             ist_tz = datetime.timezone(ist_offset)
             now = datetime.datetime.now(ist_tz)

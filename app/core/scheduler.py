@@ -12,6 +12,7 @@ async def check_in_job():
     await bot.send_checkin_message()
 
 from app.tasks.evening_summary import generate_and_send_summary
+from app.tasks.daily_summary import generate_daily_summary
 
 # Schedule the job
 # Runs Mon-Fri, 9 AM to 6 PM
@@ -33,5 +34,14 @@ scheduler.add_job(
     day_of_week=Config.SUMMARY_DAYS
 )
 
+# Daily summary memory creation at midnight
+scheduler.add_job(
+    generate_daily_summary,
+    'cron',
+    hour=0,
+    minute=0
+)
+
 def start_scheduler():
     scheduler.start()
+

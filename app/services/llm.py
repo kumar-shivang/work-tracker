@@ -255,3 +255,27 @@ Report Content:
             "critical_issues": [],
             "next_steps": []
         }
+
+async def generate_daily_summary_text(activities_text: str) -> str:
+    """
+    Generate a concise daily summary from activities.
+    Returns a plain text summary (not structured JSON).
+    """
+    prompt = f"""
+You are a personal productivity assistant. Based on the following activities from today, 
+create a concise, meaningful summary of the day's work and experiences. 
+Focus on accomplishments, patterns, and insights. Be encouraging and constructive.
+
+Today's Activities:
+{activities_text}
+
+Write a brief 2-3 paragraph summary.
+"""
+    
+    messages = [
+        {"role": "system", "content": "You are a personal assistant helping to summarize daily activities."},
+        {"role": "user", "content": "prompt}
+    ]
+    
+    response_str = await send_request(messages, schema=None, function_name="generate_daily_summary")
+    return response_str.strip()
