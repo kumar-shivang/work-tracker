@@ -41,6 +41,12 @@ class Config:
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
     SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "service-account-key.json")
 
+    # Database
+    DATABASE_URL = os.getenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://worktracker:worktracker_dev@localhost:5432/worktracker"
+    )
+
     # Scheduler Timings
     # Check-ins
     CHECKIN_DAYS = os.getenv("CHECKIN_DAYS", "mon-fri")

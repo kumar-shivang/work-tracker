@@ -20,10 +20,14 @@ import uvicorn
 from app.services.github import handle_github_webhook
 from app.services.telegram import bot
 from app.core.scheduler import start_scheduler, scheduler
+from app.db.init_db import init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    print("Initializing Database...")
+    await init_db()
+    
     print("Starting Telegram Bot...")
     await bot.initialize()
     
