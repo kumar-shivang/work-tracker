@@ -40,3 +40,6 @@ tzlocal==5.3.1
 uritemplate==4.2.0
 urllib3==2.6.3
 uvicorn==0.40.0
+sqlalchemy[asyncio]==2.0.41
+asyncpg==0.30.0
+pgvector==0.3.6
