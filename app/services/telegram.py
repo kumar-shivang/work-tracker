@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from app.services.google_docs import google_doc_client
+from app.services.google_workspace import workspace_manager
 
 class TelegramBot:
     def __init__(self):
@@ -31,6 +31,19 @@ class TelegramBot:
         
         self.application.add_handler(start_handler)
         self.application.add_handler(message_handler)
+
+        # Schedule daily prompt at 9 PM IST
+        import datetime
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_tz = datetime.timezone(ist_offset)
+        
+        self.scheduler.add_job(
+            self.send_daily_prompt,
+            'cron',
+            hour=21,
+            minute=0,
+            timezone=ist_tz
+        )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
@@ -61,10 +74,15 @@ class TelegramBot:
             reminder_text = intent.get("content")
             reminder_time_str = intent.get("datetime")
             
+            if not reminder_time_str:
+                 await context.bot.send_message(
+                    chat_id=update.effective_chat.id, 
+                    text="I understood you want a reminder, but I couldn't figure out the time. Please try again."
+                )
+                 return
+
             try:
                 reminder_time = datetime.datetime.fromisoformat(reminder_time_str)
-                # Check if time is in past, if so, just send now (or maybe it was meant for tomorrow?)
-                # LLM should handle tomorrow logic, but let's be safe.
                 if reminder_time < datetime.datetime.now(ist_tz):
                      await context.bot.send_message(
                         chat_id=update.effective_chat.id, 
@@ -87,13 +105,80 @@ class TelegramBot:
                     chat_id=update.effective_chat.id, 
                     text="I couldn't understand the time for the reminder. Please try again."
                 )
+        
+        elif intent.get("type") == "expense":
+            amount = intent.get("amount")
+            currency = intent.get("currency", "INR")
+            category = intent.get("category", "General")
+            desc = intent.get("content")
+            
+            # Log to Sheets
+            ist_offset = datetime.timedelta(hours=5, minutes=30)
+            ist_tz = datetime.timezone(ist_offset)
+            now = datetime.datetime.now(ist_tz)
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+
+            workspace_manager.append_row(
+                "PersonalLife", 
+                "Expenses",
+                [date_str, time_str, amount, currency, category, desc]
+            )
+             
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"Logged expense: {currency} {amount} for {category}."
+            )
+
+        elif intent.get("type") == "habit":
+            habit = intent.get("content")
+            
+            # Log to Sheets
+            ist_offset = datetime.timedelta(hours=5, minutes=30)
+            ist_tz = datetime.timezone(ist_offset)
+            now = datetime.datetime.now(ist_tz)
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+
+            workspace_manager.append_row(
+                "PersonalLife", 
+                "Habits",
+                [date_str, time_str, habit, "Done"]
+            )
+            
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"Great job! Logged habit: {habit}"
+            )
+
+        elif intent.get("type") == "journal":
+            entry = intent.get("content")
+            sentiment = intent.get("sentiment", "neutral")
+            
+            # Log to Sheets
+            ist_offset = datetime.timedelta(hours=5, minutes=30)
+            ist_tz = datetime.timezone(ist_offset)
+            now = datetime.datetime.now(ist_tz)
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+
+            workspace_manager.append_row(
+                "PersonalLife", 
+                "Journal",
+                [date_str, time_str, sentiment, entry]
+            )
+            
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="Saved your journal entry. Have a good rest!"
+            )
             
         else:
             # Assume status update
             logger.info(f"Received message from {user_id}: {message_text}")
             
             # Log to report
-            self.log_checkin(message_text)
+            self.log_checkin(f"📝 Status: {message_text}")
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id, 
@@ -107,14 +192,8 @@ class TelegramBot:
         ist_tz = datetime.timezone(ist_offset)
         timestamp = datetime.datetime.now(ist_tz).strftime("%H:%M")
         
-        entry = f"""
-🕐 Check-In at {timestamp}
-
-Status: {text}
-
---------------------------------------------------
-"""
-        google_doc_client.append_entry(entry)
+        entry = f"{timestamp} - {text}"
+        workspace_manager.append_to_doc("WorkTracker", entry)
 
     async def send_checkin_message(self):
         if not self.chat_id:
@@ -128,6 +207,18 @@ Status: {text}
             )
         except Exception as e:
             logger.error(f"Failed to send check-in: {e}")
+
+    async def send_daily_prompt(self):
+        if not self.chat_id:
+            return
+        
+        try:
+            await self.application.bot.send_message(
+                chat_id=self.chat_id,
+                text="🌙 **Daily Reflection**\nHow was your day? (Reply to log in journal)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send daily prompt: {e}")
 
     async def send_reminder(self, chat_id: int, text: str):
         try:

@@ -48,22 +48,79 @@ DAILY_REPORT_SCHEMA = {
     "additionalProperties": False
 }
 
+INTENT_CLASSIFICATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent_type": {
+            "type": "string",
+            "enum": ["reminder", "expense", "habit", "journal", "status_update", "other"],
+            "description": "The type of request."
+        }
+    },
+    "required": ["intent_type"],
+    "additionalProperties": False
+}
+
 REMINDER_SCHEMA = {
     "type": "object",
     "properties": {
-        "type": {
-            "type": "string",
-            "enum": ["reminder", "status_update", "other"],
-            "description": "The type of request. 'reminder' if the user wants to be reminded of something. 'status_update' if the user is providing a work update. 'other' for anything else."
-        },
-        "content": {
-            "type": "string",
-            "description": "The content of the reminder or status update. If it's a reminder, extract what needs to be reminded."
-        },
-        "datetime": {
-            "type": "string",
-            "description": "ISO 8601 datetime string for when the reminder should be set. Calculate based on the user's relative time ('in 10 minutes', 'tomorrow at 5pm') and the current time provided in the prompt. Only applicable if type is 'reminder'."
-        }
+        "type": {"const": "reminder"},
+        "content": {"type": "string", "description": "What to remind about"},
+        "datetime": {"type": "string", "description": "ISO 8601 datetime"}
+    },
+    "required": ["type", "content", "datetime"],
+    "additionalProperties": False
+}
+
+EXPENSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "expense"},
+        "content": {"type": "string", "description": "Description of expense"},
+        "amount": {"type": "number"},
+        "currency": {"type": "string"},
+        "category": {"type": "string"}
+    },
+    "required": ["type", "content", "amount", "currency", "category"],
+    "additionalProperties": False
+}
+
+HABIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "habit"},
+        "content": {"type": "string", "description": "Name of habit"}
+    },
+    "required": ["type", "content"],
+    "additionalProperties": False
+}
+
+JOURNAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "journal"},
+        "content": {"type": "string", "description": "Journal entry"},
+        "sentiment": {"type": "string", "enum": ["positive", "neutral", "negative"]}
+    },
+    "required": ["type", "content", "sentiment"],
+    "additionalProperties": False
+}
+
+STATUS_UPDATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "status_update"},
+        "content": {"type": "string", "description": "Status update text"}
+    },
+    "required": ["type", "content"],
+    "additionalProperties": False
+}
+
+OTHER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "other"},
+        "content": {"type": "string"}
     },
     "required": ["type", "content"],
     "additionalProperties": False

@@ -32,9 +32,14 @@ def send_request(messages:List[Dict[str,str]], schema:Optional[Dict[str,str]]=No
     }
     
     if schema:
+        # Strict structured output format
         payload["response_format"] = {
             "type": "json_schema",
-            "json_schema": schema
+            "json_schema": {
+                "name": "user_intent",
+                "strict": True,
+                "schema": schema
+            }
         }
 
     try:
@@ -54,34 +59,84 @@ def send_request(messages:List[Dict[str,str]], schema:Optional[Dict[str,str]]=No
     except Exception as e:
         return f"Exception calling LLM: {e}"
 
-from app.services.schemas import COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA, REMINDER_SCHEMA
+from app.services.schemas import (
+    COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA, 
+    INTENT_CLASSIFICATION_SCHEMA, REMINDER_SCHEMA, EXPENSE_SCHEMA, 
+    HABIT_SCHEMA, JOURNAL_SCHEMA, STATUS_UPDATE_SCHEMA, OTHER_SCHEMA
+)
 
 def parse_user_intent(message: str, current_time: str) -> dict:
     """
-    Parses the user's message to determine if it's a reminder or a status update.
+    Parses the user's message to determine intent using a two-step process:
+    1. Classify the intent type (Reminder, Expense, etc.)
+    2. Extract details using the specific strict schema for that intent.
     """
-    prompt = f"""
-Analyze the following message and determine if the user wants to set a reminder or is just providing a status update.
+    
+    # Step 1: Classify
+    classification_prompt = f"""
+Classify the following message into one of these categories:
+- reminder
+- expense
+- habit
+- journal
+- status_update
+- other
+
+Message: "{message}"
+
+Output a JSON object with 'intent_type'.
+"""
+    messages_1 = [
+        {"role": "system", "content": "You are a helpful personal assistant. Output valid JSON."},
+        {"role": "user", "content": classification_prompt}
+    ]
+    
+    response_1 = send_request(messages_1, schema=INTENT_CLASSIFICATION_SCHEMA)
+    
+    intent_type = "status_update" # Default
+    try:
+        if response_1.startswith("```json"):
+            response_1 = response_1.replace("```json", "").replace("```", "").strip()
+        parsed_1 = json.loads(response_1)
+        intent_type = parsed_1.get("intent_type", "status_update")
+    except Exception as e:
+        print(f"Error classifying intent: {e}")
+        # Proceed with default
+        
+    # Step 2: Extract Details
+    schema_map = {
+        "reminder": REMINDER_SCHEMA,
+        "expense": EXPENSE_SCHEMA,
+        "habit": HABIT_SCHEMA,
+        "journal": JOURNAL_SCHEMA,
+        "status_update": STATUS_UPDATE_SCHEMA,
+        "other": OTHER_SCHEMA
+    }
+    
+    selected_schema = schema_map.get(intent_type, STATUS_UPDATE_SCHEMA)
+    
+    extraction_prompt = f"""
+Extract details for the intent: {intent_type.upper()}
 
 Current Time: {current_time}
 Message: "{message}"
 
-If it is a reminder, extract the content and calculate the ISO 8601 datetime for the reminder based on the current time.
-If it is a status update or anything else, categorize it accordingly.
+Output valid JSON matching the schema.
 """
-    messages = [
+    messages_2 = [
         {"role": "system", "content": "You are a helpful personal assistant. Output valid JSON."},
-        {"role": "user", "content": prompt}
+        {"role": "user", "content": extraction_prompt}
     ]
     
-    response_str = send_request(messages, schema=REMINDER_SCHEMA)
+    response_2 = send_request(messages_2, schema=selected_schema)
     
     try:
-        if response_str.startswith("```json"):
-            response_str = response_str.replace("```json", "").replace("```", "").strip()
-        return json.loads(response_str)
+        if response_2.startswith("```json"):
+            response_2 = response_2.replace("```json", "").replace("```", "").strip()
+        parsed_2 = json.loads(response_2)
+        return parsed_2
+        
     except json.JSONDecodeError:
-        # Fallback to status update if parsing fails
         return {
             "type": "status_update",
             "content": message
