@@ -5,3 +5,5 @@ logs/
 service-account-key.json
 app/.env
 .env
+n8n.egg-info
+*.json
