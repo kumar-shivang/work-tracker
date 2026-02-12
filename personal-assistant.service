@@ -1,0 +1,20 @@
+[Unit]
+Description=Personal Work Tracker Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=shivang
+WorkingDirectory=/home/shivang/work-tracker
+Environment="TZ=Asia/Kolkata"
+ExecStart=/home/shivang/work-tracker/start.sh
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/shivang/work-tracker/.env
+
+# Logging
+StandardOutput=append:/home/shivang/work-tracker/logs/service.log
+StandardError=append:/home/shivang/work-tracker/logs/service.log
+
+[Install]
+WantedBy=multi-user.target
