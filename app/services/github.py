@@ -27,17 +27,25 @@ def fetch_diff(owner: str, repo: str, sha: str) -> str:
         return ""
 
 from app.services.google_docs import google_doc_client
+from app.services.local_storage import local_storage
 
 def append_to_report(commit_data: dict, summary: dict):
     """
-    Appends the commit summary to the Google Doc.
-    summary is now a dict with keys: files_modified, key_changes, purpose
+    Appends the commit summary to the Google Doc and Local Storage.
+    summary is now a dict with keys: title, files_modified, key_changes, purpose
     """
     ist_offset = datetime.timedelta(hours=5, minutes=30)
     ist_tz = datetime.timezone(ist_offset)
     timestamp = datetime.datetime.now(ist_tz).strftime("%H:%M")
     
-    # Format the structured summary into a readable string
+    # Extract title or use default
+    title = summary.get("title", f"Commit {commit_data['id'][:7]}")
+    
+    # 1. Append to Local Storage
+    local_storage.append_daily_entry(title, summary, commit_data)
+    
+    # 2. Append to Google Doc
+    # Format the structured summary into a readable string for the doc body
     files = ", ".join(summary.get("files_modified", []))
     changes = "\n".join([f"- {change}" for change in summary.get("key_changes", [])])
     purpose = summary.get("purpose", "No purpose provided.")
@@ -62,9 +70,9 @@ Summary:
 
 --------------------------------------------------
 """
-    # Use Google Doc Client
-    google_doc_client.append_entry(entry)
-    logger.info(f"Appended commit {commit_data['id'][:7]} to Google Doc")
+    # Use Google Doc Client with title
+    google_doc_client.append_entry(entry, title=title)
+    logger.info(f"Appended commit {commit_data['id'][:7]} to Google Doc and Local File")
 
 async def handle_github_webhook(payload: dict):
     """
@@ -107,7 +115,7 @@ async def handle_github_webhook(payload: dict):
             }
         else:
             # 2. Summarize via LLM
-            summary = summarize_diff(diff_text)
+            summary = await summarize_diff(diff_text)
             
         # 3. Append to Report
         commit_data = {

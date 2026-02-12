@@ -6,6 +6,10 @@ from typing import List, TypedDict
 COMMIT_SUMMARY_SCHEMA = {
     "type": "object",
     "properties": {
+        "title": {
+            "type": "string",
+            "description": "A short, descriptive title for the commit (under 50 chars)."
+        },
         "files_modified": {
             "type": "array",
             "items": {"type": "string"},
@@ -21,7 +25,7 @@ COMMIT_SUMMARY_SCHEMA = {
             "description": "A concise explanation of why these changes were made."
         }
     },
-    "required": ["files_modified", "key_changes", "purpose"],
+    "required": ["title", "files_modified", "key_changes", "purpose"],
     "additionalProperties": False
 }
 

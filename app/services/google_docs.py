@@ -29,9 +29,10 @@ class GoogleDocClient:
         except Exception as e:
             logger.error(f"Failed to authenticate with Google Docs: {e}")
 
-    def append_entry(self, text: str):
+    def append_entry(self, text: str, title: str = None):
         """
         Appends text to the document, ensuring a daily heading exists.
+        If title is provided, it is added as a subheading.
         """
         if not self.service or not self.document_id:
             logger.error("Google Docs service not initialized.")
@@ -66,19 +67,64 @@ class GoogleDocClient:
                         'text': f"\n{today_heading}\n"
                     }
                 })
-                # Add heading style (Heading 1)
-                # Note: Setting style requires knowing the range, which shifts. 
-                # For simplicity, we just insert text. Advanced styling can be added if needed.
-                # Let's just make it bold / large via text style or just plain text header for now.
+                # Apply Heading 1 style to the inserted date
+                requests.append({
+                    'updateParagraphStyle': {
+                        'range': {
+                            'startIndex': end_index + 1,
+                            'endIndex': end_index + len(today_heading) + 1
+                        },
+                        'paragraphStyle': {
+                            'namedStyleType': 'HEADING_1'
+                        },
+                        'fields': 'namedStyleType'
+                    }
+                })
                 
                 # Update index for next insertion
+                # +1 for newline, +len, +1 for newline
                 end_index += len(today_heading) + 2
 
-            # 3. Append the new entry
+            # 3. Add Title (Heading 2) if provided
+            if title:
+                requests.append({
+                    'insertText': {
+                        'location': {'index': end_index},
+                        'text': f"\n{title}\n"
+                    }
+                })
+                requests.append({
+                    'updateParagraphStyle': {
+                        'range': {
+                            'startIndex': end_index + 1,
+                            'endIndex': end_index + len(title) + 1
+                        },
+                        'paragraphStyle': {
+                            'namedStyleType': 'HEADING_2'
+                        },
+                        'fields': 'namedStyleType'
+                    }
+                })
+                end_index += len(title) + 2
+
+            # 4. Append the new entry
             requests.append({
                 'insertText': {
                     'location': {'index': end_index}, # Append to end
                     'text': f"{text}\n"
+                }
+            })
+            # Ensure normal text style for the body
+            requests.append({
+                'updateParagraphStyle': {
+                    'range': {
+                        'startIndex': end_index,
+                        'endIndex': end_index + len(text)
+                    },
+                    'paragraphStyle': {
+                        'namedStyleType': 'NORMAL_TEXT'
+                    },
+                    'fields': 'namedStyleType'
                 }
             })
 

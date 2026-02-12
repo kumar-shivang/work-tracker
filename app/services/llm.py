@@ -1,8 +1,10 @@
-import requests
 import json
 import os
+import time
+import httpx
 from typing import Optional, List, Dict
 from app.config import Config
+from app.services.db_service import db_service
 
 # Use Config for keys
 OPENROUTER_API_KEY = Config.OPENAI_API_KEY
@@ -11,7 +13,11 @@ referer = os.getenv("REFERER", "Personal Assistant")
 x_title = os.getenv("X_TITLE", "Personal Assistant")
 max_tokens = int(os.getenv("MAX_TOKENS", "8096"))
 
-def send_request(messages:List[Dict[str,str]], schema:Optional[Dict[str,str]]=None) -> str:
+async def send_request(
+    messages: List[Dict[str, str]], 
+    schema: Optional[Dict[str, str]] = None,
+    function_name: str = "unknown"
+) -> str:
     if not OPENROUTER_API_KEY:
         return "Error: OPENROUTER_API_KEY not set."
 
@@ -42,22 +48,65 @@ def send_request(messages:List[Dict[str,str]], schema:Optional[Dict[str,str]]=No
             }
         }
 
+    start_time = time.time()
+    response_text = ""
+    error_msg = None
+    
     try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            data=json.dumps(payload),
-        )
-        
-        if response.status_code != 200:
-            return f"Error calling LLM: {response.text}"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60.0
+            )
+            
+            if response.status_code != 200:
+                error_msg = f"Error calling LLM: {response.text}"
+                return error_msg
 
-        output = response.json()
-        if "choices" in output and len(output["choices"]) > 0:
-            return output["choices"][0]["message"]["content"]
-        return "No content returned from LLM."
+            output = response.json()
+            if "choices" in output and len(output["choices"]) > 0:
+                response_text = output["choices"][0]["message"]["content"]
+            else:
+                response_text = "No content returned from LLM."
+                
+            return response_text
+            
     except Exception as e:
-        return f"Exception calling LLM: {e}"
+        error_msg = f"Exception calling LLM: {e}"
+        return error_msg
+        
+    finally:
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        # Log to Database
+        # Try-except to ensure logging failure doesn't crash the app
+        try:
+            # Parse output as JSON if schema was provided, else keep None
+            output_parsed = None
+            if schema and response_text and not error_msg:
+                try:
+                    clean_text = response_text
+                    if clean_text.startswith("```json"):
+                        clean_text = clean_text.replace("```json", "").replace("```", "").strip()
+                    output_parsed = json.loads(clean_text)
+                except:
+                    pass
+
+            await db_service.log_llm_call(
+                function_name=function_name,
+                model=MODEL,
+                input_messages=messages,
+                input_schema=schema,
+                output_raw=response_text if not error_msg else None,
+                output_parsed=output_parsed,
+                duration_ms=duration_ms,
+                error=error_msg
+            )
+        except Exception as log_err:
+            print(f"Failed to log LLM call to DB: {log_err}")
+
 
 from app.services.schemas import (
     COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA, 
@@ -65,7 +114,7 @@ from app.services.schemas import (
     HABIT_SCHEMA, JOURNAL_SCHEMA, STATUS_UPDATE_SCHEMA, OTHER_SCHEMA
 )
 
-def parse_user_intent(message: str, current_time: str) -> dict:
+async def parse_user_intent(message: str, current_time: str) -> dict:
     """
     Parses the user's message to determine intent using a two-step process:
     1. Classify the intent type (Reminder, Expense, etc.)
@@ -91,7 +140,7 @@ Output a JSON object with 'intent_type'.
         {"role": "user", "content": classification_prompt}
     ]
     
-    response_1 = send_request(messages_1, schema=INTENT_CLASSIFICATION_SCHEMA)
+    response_1 = await send_request(messages_1, schema=INTENT_CLASSIFICATION_SCHEMA, function_name="classify_intent")
     
     intent_type = "status_update" # Default
     try:
@@ -128,7 +177,7 @@ Output valid JSON matching the schema.
         {"role": "user", "content": extraction_prompt}
     ]
     
-    response_2 = send_request(messages_2, schema=selected_schema)
+    response_2 = await send_request(messages_2, schema=selected_schema, function_name=f"extract_{intent_type}")
     
     try:
         if response_2.startswith("```json"):
@@ -143,13 +192,15 @@ Output valid JSON matching the schema.
         }
 
 
-def summarize_diff(diff_text: str) -> dict:
+async def summarize_diff(diff_text: str) -> dict:
     """
     Summarizes a git diff into a structured dictionary.
     """
     prompt = f"""
 Summarize this git diff into a structured JSON object.
+Summarize this git diff into a structured JSON object.
 Focus on WHAT changed and WHY.
+Provide a short, descriptive TITLE for the commit (e.g. "Fix login bug", "Update user profile schema").
 
 Diff:
 {diff_text[:50000]} 
@@ -160,7 +211,7 @@ Diff:
         {"role": "user", "content": prompt}
     ]
     
-    response_str = send_request(messages, schema=COMMIT_SUMMARY_SCHEMA)
+    response_str = await send_request(messages, schema=COMMIT_SUMMARY_SCHEMA, function_name="summarize_diff")
     
     try:
         # OpenRouter/LLM might return the JSON directly or inside markdown
@@ -177,7 +228,7 @@ Diff:
             "purpose": response_str
         }
 
-def summarize_daily_report(report_content: str) -> dict:
+async def summarize_daily_report(report_content: str) -> dict:
     """
     Summarizes the full day's report into a structured dictionary.
     """
@@ -192,7 +243,7 @@ Report Content:
         {"role": "user", "content": prompt}
     ]
     
-    response_str = send_request(messages, schema=DAILY_REPORT_SCHEMA)
+    response_str = await send_request(messages, schema=DAILY_REPORT_SCHEMA, function_name="summarize_daily_report")
     
     try:
         if response_str.startswith("```json"):

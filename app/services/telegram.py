@@ -68,7 +68,7 @@ class TelegramBot:
         ist_offset = datetime.timedelta(hours=5, minutes=30)
         ist_tz = datetime.timezone(ist_offset)
         current_time = datetime.datetime.now(ist_tz).isoformat()
-        intent = parse_user_intent(message_text, current_time)
+        intent = await parse_user_intent(message_text, current_time)
         
         if intent.get("type") == "reminder":
             reminder_text = intent.get("content")
