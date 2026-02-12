@@ -57,8 +57,8 @@ INTENT_CLASSIFICATION_SCHEMA = {
     "properties": {
         "intent_type": {
             "type": "string",
-            "enum": ["reminder", "expense", "habit", "journal", "status_update", "other"],
-            "description": "The type of request."
+            "enum": ["reminder", "expense", "habit", "journal", "status_update", "question", "chat", "other"],
+            "description": "The type of request. Use 'question' when the user asks about their past data/activities. Use 'chat' for casual conversation."
         }
     },
     "required": ["intent_type"],
@@ -127,5 +127,50 @@ OTHER_SCHEMA = {
         "content": {"type": "string"}
     },
     "required": ["type", "content"],
+    "additionalProperties": False
+}
+
+CONVERSATIONAL_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "response_text": {
+            "type": "string",
+            "description": "Natural language response to send to the user."
+        },
+        "action": {
+            "type": ["object", "null"],
+            "description": "Optional structured action detected in the message. Null if no action.",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["reminder", "expense", "habit", "journal", "status_update", "none"]
+                },
+                "content": {"type": "string"},
+                "amount": {"type": ["number", "null"]},
+                "currency": {"type": ["string", "null"]},
+                "category": {"type": ["string", "null"]},
+                "datetime": {"type": ["string", "null"]},
+                "sentiment": {"type": ["string", "null"]}
+            },
+            "required": ["type", "content"]
+        }
+    },
+    "required": ["response_text", "action"],
+    "additionalProperties": False
+}
+
+QUERY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"const": "question"},
+        "content": {"type": "string", "description": "The user's question rephrased for clarity"},
+        "search_query": {"type": "string", "description": "Optimized query for semantic memory search"},
+        "data_type": {
+            "type": ["string", "null"],
+            "enum": ["expense", "habit", "journal", "commit", "reminder", "status_update", "daily_summary", None],
+            "description": "Specific data type to filter by, or null for general search"
+        }
+    },
+    "required": ["type", "content", "search_query", "data_type"],
     "additionalProperties": False
 }

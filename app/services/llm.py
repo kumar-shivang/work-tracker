@@ -111,7 +111,8 @@ async def send_request(
 from app.services.schemas import (
     COMMIT_SUMMARY_SCHEMA, DAILY_REPORT_SCHEMA, 
     INTENT_CLASSIFICATION_SCHEMA, REMINDER_SCHEMA, EXPENSE_SCHEMA, 
-    HABIT_SCHEMA, JOURNAL_SCHEMA, STATUS_UPDATE_SCHEMA, OTHER_SCHEMA
+    HABIT_SCHEMA, JOURNAL_SCHEMA, STATUS_UPDATE_SCHEMA, OTHER_SCHEMA,
+    CONVERSATIONAL_RESPONSE_SCHEMA, QUERY_SCHEMA
 )
 
 async def parse_user_intent(message: str, current_time: str) -> dict:
@@ -124,12 +125,14 @@ async def parse_user_intent(message: str, current_time: str) -> dict:
     # Step 1: Classify
     classification_prompt = f"""
 Classify the following message into one of these categories:
-- reminder
-- expense
-- habit
-- journal
-- status_update
-- other
+- reminder (setting a reminder or alarm)
+- expense (logging money spent)
+- habit (logging a habit like exercise, reading, etc.)
+- journal (personal reflection or diary entry)
+- status_update (work status or progress update)
+- question (asking about past data, activities, or summaries)
+- chat (casual conversation, greetings, or general talk)
+- other (doesn't fit any category)
 
 Message: "{message}"
 
@@ -159,6 +162,8 @@ Output a JSON object with 'intent_type'.
         "habit": HABIT_SCHEMA,
         "journal": JOURNAL_SCHEMA,
         "status_update": STATUS_UPDATE_SCHEMA,
+        "question": QUERY_SCHEMA,
+        "chat": OTHER_SCHEMA,
         "other": OTHER_SCHEMA
     }
     
@@ -274,8 +279,31 @@ Write a brief 2-3 paragraph summary.
     
     messages = [
         {"role": "system", "content": "You are a personal assistant helping to summarize daily activities."},
-        {"role": "user", "content": "prompt}
+        {"role": "user", "content": prompt}
     ]
     
     response_str = await send_request(messages, schema=None, function_name="generate_daily_summary")
     return response_str.strip()
+
+
+async def generate_conversational_response(context_messages: list) -> dict:
+    """
+    Generate a conversational response using enriched context (history + memories).
+    Returns a dict with 'response_text' and optional 'action'.
+    """
+    response_str = await send_request(
+        context_messages, 
+        schema=CONVERSATIONAL_RESPONSE_SCHEMA, 
+        function_name="conversational_response"
+    )
+    
+    try:
+        if response_str.startswith("```json"):
+            response_str = response_str.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(response_str)
+        return parsed
+    except (json.JSONDecodeError, AttributeError):
+        return {
+            "response_text": response_str if isinstance(response_str, str) else "I'm having trouble understanding. Could you rephrase?",
+            "action": None
+        }
