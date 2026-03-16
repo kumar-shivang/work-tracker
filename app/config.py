@@ -13,6 +13,9 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
     
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    
+    # Memory Settings
+    MEMORY_SIMILARITY_THRESHOLD = 0.7
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "x-ai/grok-4.1-fast") # Default per .env
     
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -35,10 +38,12 @@ class Config:
 
     # Alias for llm.py
     MODEL = os.getenv("MODEL", OPENAI_MODEL)
+    FAST_MODEL = os.getenv("FAST_MODEL", "qwen/qwen3-30b-a3b")
     
     # Google Docs
     GOOGLE_DOC_ID = os.getenv("GOOGLE_DOC_ID")
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+    GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
     SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "service-account-key.json")
 
     # Database

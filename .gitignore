@@ -7,3 +7,5 @@ app/.env
 .env
 n8n.egg-info
 *.json
+daily_reports/
+test_*.py

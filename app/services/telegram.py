@@ -12,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import Config
 from app.services.github import append_to_report
 from app.services.llm import parse_user_intent, generate_conversational_response
+from app.services.tools_registry import tools_registry
 
 # Enable logging
 logging.basicConfig(
@@ -25,6 +26,11 @@ from app.services.db_service import db_service
 from app.services.conversation import conversation_context
 from app.services.pending_actions import pending_actions
 from app.services.memory import memory_service
+from app.services.summaries import (
+    get_reminders_summary, get_expenses_summary,
+    get_habits_summary, get_daily_summary,
+    escape_md
+)
 
 # ─── Helpers ────────────────────────────────────────────────
 
@@ -34,12 +40,7 @@ def ist_now() -> datetime.datetime:
     return datetime.datetime.now(ist_tz)
 
 
-def escape_md(text: str) -> str:
-    """Escape special characters for Telegram MarkdownV2."""
-    special = r'_*[]()~`>#+-=|{}.!'
-    for ch in special:
-        text = text.replace(ch, f'\\{ch}')
-    return text
+
 
 
 class TelegramBot:
@@ -47,6 +48,7 @@ class TelegramBot:
         self.application = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
         self.chat_id = Config.MY_TELEGRAM_CHAT_ID
         self.scheduler = AsyncIOScheduler()
+        self.awaiting_checkin_response = False
         self._setup_handlers()
         
     def _setup_handlers(self):
@@ -158,16 +160,33 @@ class TelegramBot:
             )
             return
 
-        # Store as pending action and show confirmation
-        action_id = pending_actions.store(intent)
-        reminder_time = intent.get("datetime", "")
+        # Validate and normalize the time BEFORE storing as action
+        reminder_time_str = intent.get("datetime", "")
         content = intent.get("content", text)
 
         try:
-            dt = datetime.datetime.fromisoformat(reminder_time)
+            # Ensure reminder_time_str is a valid string
+            if not reminder_time_str or not isinstance(reminder_time_str, str):
+                raise ValueError(f"Invalid datetime: {reminder_time_str}")
+            
+            # Handle common LLM output format issue
+            if reminder_time_str.endswith(" IST"):
+                reminder_time_str = reminder_time_str.replace(" IST", "+05:30")
+            
+            dt = datetime.datetime.fromisoformat(reminder_time_str)
+            # Update intent with clean ISO string so _execute_reminder doesn't fail
+            intent["datetime"] = dt.isoformat()
             time_display = dt.strftime("%b %d, %I:%M %p")
         except (ValueError, TypeError):
-            time_display = reminder_time
+            logger.warning(f"Failed to parse reminder time: '{reminder_time_str}'")
+            await update.message.reply_text(
+                "🤔 I understood the reminder, but I couldn't parse the time effectively.\n"
+                "Please try again with a clearer time expression (e.g., 'in 10 minutes' or 'at 5pm')."
+            )
+            return
+
+        # Store as pending action and show confirmation
+        action_id = pending_actions.store(intent)
 
         keyboard = [[
             InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{action_id}"),
@@ -310,46 +329,10 @@ class TelegramBot:
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         try:
-            memories = await memory_service.retrieve_by_date_range(
-                start_date=start_of_day,
-                end_date=now,
-                limit=20
-            )
-
-            if not memories:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="📭 No activities logged yet today\\. Start by logging something\\!",
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                return
-
-            # Group by type
-            by_type = {}
-            for m in memories:
-                mt = m.memory_type or "other"
-                by_type.setdefault(mt, []).append(m.content)
-
-            summary_parts = [f"📊 *Today's Summary* — {escape_md(now.strftime('%b %d, %A'))}\n"]
-            
-            type_emoji = {
-                "commit": "💻", "expense": "💰", "habit": "✅",
-                "journal": "📓", "reminder": "⏰", "status_update": "📝",
-                "daily_summary": "📋"
-            }
-            
-            for mtype, items in by_type.items():
-                emoji = type_emoji.get(mtype, "📌")
-                summary_parts.append(f"\n{emoji} *{escape_md(mtype.replace('_', ' ').title())}* \\({len(items)}\\)")
-                for item in items[:5]:  # Cap at 5 per type
-                    short = item[:100] + "..." if len(item) > 100 else item
-                    summary_parts.append(f"  • {escape_md(short)}")
-                if len(items) > 5:
-                    summary_parts.append(f"  _\\.\\.\\.and {len(items) - 5} more_")
-
+            summary_text = await get_daily_summary()
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="\n".join(summary_parts),
+                text=summary_text,
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         except Exception as e:
@@ -395,12 +378,9 @@ class TelegramBot:
                 for r in results
             ])
 
-            from app.services.llm import send_request
-            answer_messages = [
-                {"role": "system", "content": "You are a personal assistant. Answer the user's question based on their stored memories. Be concise and helpful. Use emojis sparingly."},
-                {"role": "user", "content": f"My question: {query}\n\nHere are relevant memories:\n{memory_text}\n\nAnswer my question based on these memories."}
-            ]
-            answer = await send_request(answer_messages, function_name="recall_answer")
+            from app.services.llm import answer_recall_question
+            answer_data = await answer_recall_question(query, memory_text)
+            answer = answer_data.get("answer", "I couldn't find relevant information.")
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -420,28 +400,13 @@ class TelegramBot:
             return
 
         try:
-            expenses = await db_service.get_expenses(limit=10)
-            if not expenses:
-                await update.message.reply_text("📭 No expenses logged yet\\.", parse_mode=ParseMode.MARKDOWN_V2)
-                return
-
-            lines = [f"💰 *Recent Expenses*\n"]
-            total = 0
-            for exp in expenses:
-                date_str = exp.created_at.strftime("%b %d") if exp.created_at else "?"
-                lines.append(
-                    f"  • {escape_md(date_str)}: {escape_md(str(exp.currency))} "
-                    f"{escape_md(str(exp.amount))} — {escape_md(exp.description or exp.category or 'N/A')}"
-                )
-                total += exp.amount or 0
-
-            lines.append(f"\n*Total:* {escape_md(str(expenses[0].currency if expenses else 'INR'))} {escape_md(str(total))}")
-
+            text = await get_expenses_summary(limit=10)
+            
             keyboard = [[
                 InlineKeyboardButton("➕ Add Expense", callback_data="quick_add_expense"),
             ]]
             await update.message.reply_text(
-                "\n".join(lines),
+                text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -455,30 +420,8 @@ class TelegramBot:
             return
 
         try:
-            habits = await db_service.get_habits(limit=20)
-            today = ist_now().date()
-            today_habits = [h for h in habits if h.logged_at and h.logged_at.date() == today]
-
-            if not today_habits:
-                keyboard = [[
-                    InlineKeyboardButton("🏋️ Exercise", callback_data="habit_exercise"),
-                    InlineKeyboardButton("📖 Reading", callback_data="habit_reading"),
-                ], [
-                    InlineKeyboardButton("🧘 Meditation", callback_data="habit_meditation"),
-                    InlineKeyboardButton("💧 Water", callback_data="habit_water"),
-                ]]
-                await update.message.reply_text(
-                    "📭 *No habits logged today\\.* Tap to log one:",
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                return
-
-            lines = [f"✅ *Today's Habits* — {escape_md(today.strftime('%b %d'))}\n"]
-            for h in today_habits:
-                time_str = h.logged_at.strftime("%I:%M %p") if h.logged_at else ""
-                lines.append(f"  • {escape_md(h.habit_name)} — {escape_md(time_str)}")
-
+            text = await get_habits_summary(limit=20)
+            
             keyboard = [[
                 InlineKeyboardButton("🏋️ Exercise", callback_data="habit_exercise"),
                 InlineKeyboardButton("📖 Reading", callback_data="habit_reading"),
@@ -487,7 +430,7 @@ class TelegramBot:
                 InlineKeyboardButton("💧 Water", callback_data="habit_water"),
             ]]
             await update.message.reply_text(
-                "\n".join(lines),
+                text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -501,21 +444,9 @@ class TelegramBot:
             return
 
         try:
-            reminders = await db_service.get_pending_reminders()
-            if not reminders:
-                await update.message.reply_text(
-                    "📭 *No upcoming reminders\\.*\nUse `/remind` to set one\\!",
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                return
-
-            lines = [f"⏰ *Upcoming Reminders*\n"]
-            for r in reminders:
-                time_str = r.remind_at.strftime("%b %d, %I:%M %p") if r.remind_at else "?"
-                lines.append(f"  • {escape_md(time_str)}: {escape_md(r.content)}")
-
+            text = await get_reminders_summary()
             await update.message.reply_text(
-                "\n".join(lines),
+                text,
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         except Exception as e:
@@ -588,9 +519,34 @@ class TelegramBot:
         if data == "quick_add_expense":
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="💰 Send me the expense details, e.g.:\n`/expense 200 coffee at starbucks`",
+                text="💰 Send me the expense details, e\\.g\\.:\n`/expense 200 coffee at starbucks`",
                 parse_mode=ParseMode.MARKDOWN_V2
             )
+            return
+
+        if data == "quick_view_reminders":
+            text = await get_reminders_summary()
+            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+            return
+
+        if data == "quick_view_expenses":
+            text = await get_expenses_summary()
+            keyboard = [[
+                InlineKeyboardButton("➕ Add Expense", callback_data="quick_add_expense"),
+            ]]
+            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if data == "quick_view_habits":
+            text = await get_habits_summary()
+            keyboard = [[
+                InlineKeyboardButton("🏋️ Exercise", callback_data="habit_exercise"),
+                InlineKeyboardButton("📖 Reading", callback_data="habit_reading"),
+            ], [
+                InlineKeyboardButton("🧘 Meditation", callback_data="habit_meditation"),
+                InlineKeyboardButton("💧 Water", callback_data="habit_water"),
+            ]]
+            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
         # ─── Daily prompt buttons ───────────────────────
@@ -605,6 +561,12 @@ class TelegramBot:
 
         if data == "prompt_summary":
             await self._send_summary(query.message.chat_id, context)
+            return
+
+        # ─── Check-in Ignore ────────────────────────────
+        if data == "ignore_checkin":
+            self.awaiting_checkin_response = False
+            await query.edit_message_text("🚫 Check-in ignored.")
             return
 
     # ════════════════════════════════════════════════════════
@@ -628,6 +590,24 @@ class TelegramBot:
             await self._execute_journal(update.effective_chat.id, message_text, sentiment, context)
             return
 
+        # ─── Check for awaiting hourly check-in response ─
+        if self.awaiting_checkin_response:
+            self.awaiting_checkin_response = False
+            # Log directly to work tracker and DB
+            self.log_checkin(f"📝 Status: {message_text}")
+            await db_service.log_status_update(content=message_text, source="telegram")
+            
+            keyboard = [[
+                InlineKeyboardButton("📊 View Summary", callback_data="quick_summary"),
+            ]]
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"✅ Logged work status: {message_text}",
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
         # ─── Conversational flow ────────────────────────
         # 1. Add user message to conversation context
         conversation_context.add_message(chat_id, "user", message_text)
@@ -637,6 +617,39 @@ class TelegramBot:
 
         # 3. Get conversational response from LLM
         response = await generate_conversational_response(context_messages)
+        
+        # ─── Tool Execution Loop ────────────────────────
+        # Check if LLM wants to call a tool
+        tool_call = response.get("tool_call")
+        if tool_call:
+            tool_name = tool_call.get("function_name")
+            tool_args = tool_call.get("arguments", {})
+            
+            # Notify user that we are checking something
+            status_msg = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🔍 _Checking {tool_name.replace('_', ' ')}\\.\\.\\._",
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            
+            # Execute tool
+            tool_output = await tools_registry.execute(tool_name, tool_args)
+            
+            # Add tool output to context and ask again
+            context_messages.append({
+                "role": "system", 
+                "content": f"Tool '{tool_name}' output:\n{tool_output}\n\nUser's original message was: {message_text}. Now answer the user based on this tool output."
+            })
+            
+            # Get final response
+            response = await generate_conversational_response(context_messages)
+            
+            # Delete status message
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
         response_text = response.get("response_text", "")
         action = response.get("action")
 
@@ -696,7 +709,14 @@ class TelegramBot:
         ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
         try:
+            # Ensure reminder_time_str is a valid string
+            if not reminder_time_str or not isinstance(reminder_time_str, str):
+                raise ValueError(f"Invalid datetime: {reminder_time_str}")
+            
             reminder_time = datetime.datetime.fromisoformat(reminder_time_str)
+            if reminder_time.tzinfo is None:
+                reminder_time = reminder_time.replace(tzinfo=ist_tz)
+            
             now = datetime.datetime.now(ist_tz)
 
             if reminder_time < now:
@@ -729,6 +749,7 @@ class TelegramBot:
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except ValueError:
+            logger.error(f"Error parsing reminder time: {reminder_time_str}")
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="❌ Couldn't parse the time. Please try again."
@@ -869,7 +890,9 @@ class TelegramBot:
             keyboard = [[
                 InlineKeyboardButton("📊 Summary", callback_data="quick_summary"),
                 InlineKeyboardButton("📝 Log Status", callback_data="quick_log_status"),
+                InlineKeyboardButton("🚫 Ignore", callback_data="ignore_checkin"),
             ]]
+            self.awaiting_checkin_response = True
             await self.application.bot.send_message(
                 chat_id=self.chat_id,
                 text="🕐 *Hourly Check\\-In*\nWhat are you working on right now?",

@@ -14,16 +14,33 @@ def fetch_diff(owner: str, repo: str, sha: str) -> str:
     Fetches the diff for a specific commit using the GitHub API.
     """
     url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+    
+    # Check if token is configured
+    if not Config.GITHUB_TOKEN:
+        logger.error("GitHub token not configured. Please set GITHUB_TOKEN environment variable.")
+        return ""
+    
     headers = {
         "Authorization": f"token {Config.GITHUB_TOKEN}",
         "Accept": "application/vnd.github.v3.diff"
     }
     
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.text
-    else:
-        logger.error(f"Failed to fetch diff for {sha}: {response.status_code} - {response.text}")
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 401:
+            logger.error(f"GitHub authentication failed (401). Token may be invalid or expired. "
+                        f"Please update GITHUB_TOKEN environment variable. URL: {url}")
+        elif response.status_code == 404:
+            logger.warning(f"Commit not found (404): {owner}/{repo}/{sha}")
+        else:
+            logger.error(f"Failed to fetch diff for {sha} ({response.status_code}). "
+                        f"Response: {response.text[:200]}")
+        return ""
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error while fetching diff for {sha}: {str(e)}")
         return ""
 
 from app.services.google_docs import google_doc_client
@@ -32,7 +49,7 @@ from app.services.local_storage import local_storage
 def append_to_report(commit_data: dict, summary: dict):
     """
     Appends the commit summary to the Google Doc and Local Storage.
-    summary is now a dict with keys: title, files_modified, key_changes, purpose
+    summary is now a dict with keys: title, detailed_summary, files_modified, key_changes, purpose
     """
     ist_offset = datetime.timedelta(hours=5, minutes=30)
     ist_tz = datetime.timezone(ist_offset)
@@ -49,10 +66,20 @@ def append_to_report(commit_data: dict, summary: dict):
     files = ", ".join(summary.get("files_modified", []))
     changes = "\n".join([f"- {change}" for change in summary.get("key_changes", [])])
     purpose = summary.get("purpose", "No purpose provided.")
+    detailed_summary = summary.get("detailed_summary", "")
     
+    # Build summary section
     formatted_summary = f"""
 **Purpose**: {purpose}
-
+"""
+    
+    # Add detailed summary if available
+    if detailed_summary:
+        formatted_summary += f"""
+**Summary**: {detailed_summary}
+"""
+    
+    formatted_summary += f"""
 **Key Changes**:
 {changes}
 

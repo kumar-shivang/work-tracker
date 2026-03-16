@@ -5,7 +5,7 @@ Provides CRUD functions for all database tables.
 import logging
 import time
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.connection import async_session
 from app.db.models import (
@@ -285,13 +285,29 @@ class DBService:
         query_embedding: list,
         memory_type: str = None,
         limit: int = 5,
+        decay_rate: float = 0.1,
     ) -> List[Dict[str, Any]]:
         """
-        Search memories by cosine similarity.
-        Returns list of dicts with 'content', 'memory_type', 'metadata', 'distance'.
+        Search memories by Hybrid Score (Cosine Similarity + Time Decay).
+        Score = (1 - CosineDistance) * exp(-decay_rate * days_since_creation)
         """
         async with async_session() as session:
-            # Use pgvector cosine distance operator <=>
+            # 1. Calculate Cosine Similarity (1 - distance)
+            # pgvector's <=> operator returns distance (0=identical, 2=opposite)
+            # We want similarity (1=identical, -1=opposite). 
+            # For normalized vectors, distance = 1 - cosine_similarity.
+            # So cosine_similarity = 1 - distance.
+            similarity = 1 - Memory.embedding.cosine_distance(query_embedding)
+            
+            # 2. Calculate Time Decay
+            # days_since = (now() - created_at) in days
+            # decay = exp(-rate * days_since)
+            days_since = func.extract('day', func.now() - Memory.created_at)
+            time_decay = func.exp(-decay_rate * days_since)
+            
+            # 3. Hybrid Score
+            hybrid_score = similarity * time_decay
+            
             query = (
                 select(
                     Memory.id,
@@ -299,11 +315,13 @@ class DBService:
                     Memory.memory_type,
                     Memory.metadata_,
                     Memory.created_at,
-                    Memory.embedding.cosine_distance(query_embedding).label("distance"),
+                    similarity.label("similarity"),
+                    hybrid_score.label("score"),
                 )
-                .order_by("distance")
+                .order_by(hybrid_score.desc())
                 .limit(limit)
             )
+            
             if memory_type:
                 query = query.where(Memory.memory_type == memory_type)
 
@@ -316,7 +334,8 @@ class DBService:
                     "content": row.content,
                     "memory_type": row.memory_type,
                     "metadata": row.metadata_,
-                    "distance": float(row.distance),
+                    "similarity": float(row.similarity),
+                    "score": float(row.score),
                     "created_at": row.created_at.isoformat(),
                 }
                 for row in rows

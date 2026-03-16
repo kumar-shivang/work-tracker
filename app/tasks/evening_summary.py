@@ -2,8 +2,9 @@ import os
 import datetime
 import logging
 from app.config import Config
-from app.services.llm import summarize_daily_report
+from app.services.llm import consolidate_commit_summaries, summarize_daily_report
 from app.services.email import send_email
+from app.services.local_storage import local_storage
 
 logger = logging.getLogger(__name__)
 
@@ -11,20 +12,23 @@ from app.services.google_docs import google_doc_client
 
 async def generate_and_send_summary():
     """
-    Reads today's report from Google Doc, generates an LLM summary, and sends it via email.
+    Reads today's report from Google Doc, consolidates commit summaries, and sends via email.
     """
     logger.info("Generating evening summary...")
     
-    # Read report content
+    # Read report content from Google Doc
     report_content = google_doc_client.read_day_content()
         
     if not report_content.strip():
         logger.warning("Google Doc is empty or unreadable. Skipping email.")
         return
 
-    # Generate Summary
+    # Generate Consolidated Summary from commit data
     try:
+        # For now, use the raw report content for summarization
+        # In the future, we can store structured commit summaries and consolidate them
         llm_summary = await summarize_daily_report(report_content)
+        logger.info("Generated LLM summary successfully")
     except Exception as e:
         logger.error(f"LLM summarization failed: {e}")
         llm_summary = {"major_accomplishments": ["Failed to generate LLM summary"], "critical_issues": [str(e)], "next_steps": []}
@@ -34,25 +38,53 @@ async def generate_and_send_summary():
     subject = f"daily report — {datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime('%d %b %Y')}"
     
     # Parse structured summary
-    # llm_summary is now a dict
     if isinstance(llm_summary, str):
         # Fallback if something went wrong and it returned a string
         formatted_html = llm_summary
     else:
-        accomplishments = "".join([f"<li>{item}</li>" for item in llm_summary.get("major_accomplishments", [])])
-        issues = "".join([f"<li>{item}</li>" for item in llm_summary.get("critical_issues", [])])
-        next_steps = "".join([f"<li>{item}</li>" for item in llm_summary.get("next_steps", [])])
+        # Handle both old (3-field) and new (consolidated) summary formats
+        accomplishments = llm_summary.get("major_accomplishments", [])
+        critical_issues = llm_summary.get("critical_issues", [])
+        next_steps = llm_summary.get("next_steps", [])
         
-        formatted_html = f"""
-        <h3>🚀 Major Accomplishments</h3>
-        <ul>{accomplishments}</ul>
+        # Handle consolidated format (executive_summary, technical_details)
+        executive_summary = llm_summary.get("executive_summary", "")
+        technical_details = llm_summary.get("technical_details", [])
         
-        <h3>🚧 Critical Issues / Blockers</h3>
-        <ul>{issues}</ul>
+        accomplishments_html = "".join([f"<li>{item}</li>" for item in accomplishments if item])
+        issues_html = "".join([f"<li>{item}</li>" for item in critical_issues if item])
+        next_steps_html = "".join([f"<li>{item}</li>" for item in next_steps if item])
+        technical_html = "".join([f"<li>{item}</li>" for item in technical_details if item])
         
-        <h3>📝 Next Steps</h3>
-        <ul>{next_steps}</ul>
-        """
+        # Build HTML with available sections
+        formatted_html = ""
+        
+        if executive_summary:
+            formatted_html += f"<p><strong>Summary:</strong> {executive_summary}</p>\n"
+        
+        if accomplishments_html:
+            formatted_html += f"""
+            <h3>🚀 Major Accomplishments</h3>
+            <ul>{accomplishments_html}</ul>
+            """
+        
+        if technical_html:
+            formatted_html += f"""
+            <h3>⚙️ Technical Details</h3>
+            <ul>{technical_html}</ul>
+            """
+        
+        if issues_html:
+            formatted_html += f"""
+            <h3>🚧 Critical Issues / Blockers</h3>
+            <ul>{issues_html}</ul>
+            """
+        
+        if next_steps_html:
+            formatted_html += f"""
+            <h3>📝 Next Steps</h3>
+            <ul>{next_steps_html}</ul>
+            """
 
     # Simple HTML wrapper
     body_html = f"""

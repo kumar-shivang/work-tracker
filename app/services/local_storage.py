@@ -31,6 +31,7 @@ class LocalStorage:
         files = ", ".join(summary.get("files_modified", []))
         changes = "\n".join([f"- {change}" for change in summary.get("key_changes", [])])
         purpose = summary.get("purpose", "No purpose provided.")
+        detailed_summary = summary.get("detailed_summary", "")
         
         entry = f"""## {time_str} - {title}
 
@@ -39,7 +40,14 @@ class LocalStorage:
 **Branch**: {commit_data['ref'].replace('refs/heads/', '')}
 
 **Purpose**: {purpose}
-
+"""
+        
+        if detailed_summary:
+            entry += f"""
+**Summary**: {detailed_summary}
+"""
+        
+        entry += f"""
 **Key Changes**:
 {changes}
 
@@ -54,6 +62,35 @@ class LocalStorage:
             logger.info(f"Appended entry to local file: {filename}")
         except Exception as e:
             logger.error(f"Failed to append to local file {filename}: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to append to local file {filename}: {e}")
+
+    def append_work_log(self, content: str):
+        """
+        Appends a simple work log entry to the daily markdown file.
+        """
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_tz = datetime.timezone(ist_offset)
+        now = datetime.datetime.now(ist_tz)
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M")
+        
+        filename = os.path.join(self.base_dir, f"{date_str}.md")
+        
+        # Create file with user-friendly heading if it doesn't exist
+        if not os.path.exists(filename):
+            with open(filename, "w") as f:
+                f.write(f"# Daily Report - {now.strftime('%d %B %Y')}\n\n")
+        
+        entry = f"## {time_str} - Work Log\n\n{content}\n\n---\n"
+        
+        try:
+            with open(filename, "a") as f:
+                f.write(entry)
+            logger.info(f"Appended work log to local file: {filename}")
+        except Exception as e:
+            logger.error(f"Failed to append work log to {filename}: {e}")
 
 # Singleton instance
 local_storage = LocalStorage()

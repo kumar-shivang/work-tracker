@@ -47,6 +47,15 @@ app = FastAPI(title="Personal Assistant", lifespan=lifespan)
 def read_root():
     return {"status": "running", "service": "n8n-replacement"}
 
+@app.post("/")
+async def handle_post_root(request: Request):
+    """
+    Handle accidental POST requests to root (often from misconfigured webhooks).
+    """
+    body = await request.body()
+    logging.warning(f"Received POST request to / with body: {body.decode('utf-8', errors='ignore')}")
+    return {"status": "ignored", "message": "POST to root not supported but logged for debugging"}
+
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()

@@ -7,6 +7,7 @@ to provide rich context for LLM-powered conversational responses.
 import logging
 import datetime
 from typing import Optional
+from app.config import Config
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class ConversationContext:
         - Current user message
         """
         from app.services.memory import memory_service
+        from app.services.tools_registry import tools_registry
 
         ist_offset = datetime.timedelta(hours=5, minutes=30)
         ist_tz = datetime.timezone(ist_offset)
@@ -55,19 +57,34 @@ class ConversationContext:
         # Search for relevant memories
         memory_context = ""
         try:
-            memories = await memory_service.search_memories(query=message, limit=3)
+            # Top-K + Threshold Strategy
+            # 1. Request Top 10 from DB (sorted by Hybrid Score = Recency * Similarity)
+            memories = await memory_service.search_memories(query=message, limit=10)
+            
             if memories:
                 memory_items = []
                 for m in memories:
                     mem_type = m.get("memory_type", "unknown")
                     content = m.get("content", "")
                     similarity = m.get("similarity", 0)
-                    if similarity > 0.3:  # Only include reasonably relevant memories
+                    score = m.get("score", 0)
+                    
+                    logger.debug(f"Memory candidate: type={mem_type}, sim={similarity:.3f}, score={score:.3f}")
+                    
+                    # 2. Apply Threshold: Keep only if similarity > Config.MEMORY_SIMILARITY_THRESHOLD
+                    if similarity > Config.MEMORY_SIMILARITY_THRESHOLD:
                         memory_items.append(f"  [{mem_type}] {content}")
+                        
+                # Limit to top 3 relevant memories to avoid context bloat
+                memory_items = memory_items[:3]
+                
+                # 3. Count Check: If 0 results remain, do not provide any context
                 if memory_items:
                     memory_context = "\n\nRelevant memories from your history:\n" + "\n".join(memory_items)
         except Exception as e:
             logger.warning(f"Failed to search memories for context: {e}")
+
+        tools_prompt = tools_registry.get_system_prompt_part()
 
         system_prompt = f"""You are a personal assistant bot on Telegram for Shivang. You help track work, expenses, habits, journal entries, reminders, and provide summaries.
 
@@ -82,6 +99,7 @@ Your capabilities:
 - Status updates for work tracking
 - Search past memories and activities
 - Provide summaries of recent activity
+{tools_prompt}
 
 Respond naturally and conversationally. Be concise but friendly. Use emojis sparingly.
 When you detect an actionable intent (reminder, expense, habit, journal, status_update), include it in your response.

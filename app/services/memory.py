@@ -267,7 +267,8 @@ Statistics:
         self,
         query: str,
         memory_type: Optional[str] = None,
-        limit: int = 5
+        limit: int = 5,
+        decay_rate: float = 0.1
     ) -> List[Dict[str, Any]]:
         """
         Search memories using semantic similarity.
@@ -287,7 +288,8 @@ Statistics:
         results = await db_service.search_memories(
             query_embedding=query_embedding,
             memory_type=memory_type,
-            limit=limit
+            limit=limit,
+            decay_rate=decay_rate
         )
         
         logger.info(f"Search query '{query}' returned {len(results)} results")
